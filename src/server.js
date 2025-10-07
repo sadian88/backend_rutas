@@ -19,7 +19,37 @@ const usuarioRoutes = require('./routes/usuario.routes');
 
 const app = express();
 
-app.use(cors());
+const parseOrigins = (value = '') =>
+  value
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+const corsOrigins = parseOrigins(process.env.CORS_ALLOWED_ORIGINS);
+
+if (!corsOrigins.length) {
+  corsOrigins.push('http://localhost:3000');
+}
+
+if (process.env.NODE_ENV === 'production') {
+  corsOrigins.push('https://sadian88.github.io');
+}
+
+const allowedOrigins = new Set(corsOrigins);
+const allowAll = allowedOrigins.has('*');
+
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin || allowAll || allowedOrigins.has(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`Origen no permitido por CORS: ${origin}`));
+    }
+  },
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(morgan('dev'));
 
