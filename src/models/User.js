@@ -18,7 +18,6 @@ const User = sequelize.define(
     email: {
       type: DataTypes.STRING,
       allowNull: false,
-      unique: true,
       validate: {
         isEmail: true,
       },
@@ -51,6 +50,13 @@ const User = sequelize.define(
   },
   {
     tableName: 'users',
+    indexes: [
+      {
+        unique: true,
+        name: 'users_email_unique',
+        fields: ['email'],
+      },
+    ],
     defaultScope: {
       attributes: { exclude: ['password'] },
     },

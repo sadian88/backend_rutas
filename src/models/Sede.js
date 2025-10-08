@@ -12,7 +12,6 @@ const Sede = sequelize.define(
     nombre: {
       type: DataTypes.STRING,
       allowNull: false,
-      unique: true,
     },
     direccion: {
       type: DataTypes.STRING,
@@ -40,6 +39,13 @@ const Sede = sequelize.define(
   },
   {
     tableName: 'sedes',
+    indexes: [
+      {
+        unique: true,
+        name: 'sedes_nombre_unique',
+        fields: ['nombre'],
+      },
+    ],
   }
 );
 

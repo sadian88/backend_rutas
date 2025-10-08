@@ -1,4 +1,5 @@
-const { Sede, User } = require('../models');
+const { Op } = require('sequelize');
+const { sequelize, Sede, User, Ruta } = require('../models');
 
 const asignarJefeASede = async (sede, jefeId) => {
   if (!jefeId) {
@@ -98,19 +99,36 @@ const updateSede = async (req, res, next) => {
 };
 
 const deleteSede = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+
   try {
-    const sede = await Sede.findByPk(req.params.id);
+    const sede = await Sede.findByPk(req.params.id, { transaction });
     if (!sede) {
+      await transaction.rollback();
       return res.status(404).json({ mensaje: 'Sede no encontrada' });
     }
 
+    const rutasEliminadas = await Ruta.destroy({
+      where: {
+        [Op.or]: [{ sedeOrigenId: sede.id }, { sedeDestinoId: sede.id }],
+      },
+      transaction,
+    });
+
     if (sede.jefeId) {
-      await User.update({ sedeId: null }, { where: { id: sede.jefeId } });
+      await User.update({ sedeId: null }, { where: { id: sede.jefeId }, transaction });
     }
 
-    await sede.destroy();
-    return res.json({ mensaje: 'Sede eliminada' });
+    await sede.destroy({ transaction });
+    await transaction.commit();
+
+    return res.json({
+      mensaje: rutasEliminadas
+        ? 'Sede eliminada junto con rutas y recargas asociadas'
+        : 'Sede eliminada',
+    });
   } catch (error) {
+    await transaction.rollback();
     return next(error);
   }
 };

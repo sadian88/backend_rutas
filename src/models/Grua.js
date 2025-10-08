@@ -14,12 +14,10 @@ const Grua = sequelize.define(
     codigo: {
       type: DataTypes.STRING,
       allowNull: false,
-      unique: true,
     },
     placa: {
       type: DataTypes.STRING,
       allowNull: false,
-      unique: true,
     },
     modelo: {
       type: DataTypes.STRING,
@@ -53,6 +51,18 @@ const Grua = sequelize.define(
   },
   {
     tableName: 'gruas',
+    indexes: [
+      {
+        unique: true,
+        name: 'gruas_codigo_unique',
+        fields: ['codigo'],
+      },
+      {
+        unique: true,
+        name: 'gruas_placa_unique',
+        fields: ['placa'],
+      },
+    ],
   }
 );
 

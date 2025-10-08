@@ -1,5 +1,5 @@
 const { QueryTypes } = require('sequelize');
-const { sequelize, Gasto, Recarga } = require('../models');
+const { sequelize } = require('../models');
 
 const parseDate = (value, label) => {
   if (!value) {
@@ -111,6 +111,141 @@ const ejecutarAgregacion = async (params) => {
   });
 };
 
+const mapToGroupTotals = (items) =>
+  items.map((item) => ({
+    key: item.clave === null ? '0' : String(item.clave),
+    etiqueta: item.etiqueta,
+    total: Number(item.total || 0),
+  }));
+
+const obtenerDetalleRutas = async ({ filtros, rutaId, sedeId, conductorId }) => {
+  const where = ['1=1'];
+  const replacements = {};
+
+  if (rutaId) {
+    where.push('rt.id = :rutaId');
+    replacements.rutaId = Number(rutaId);
+  }
+
+  if (sedeId) {
+    where.push('(rt.sede_origen_id = :sedeId OR rt.sede_destino_id = :sedeId)');
+    replacements.sedeId = Number(sedeId);
+  }
+
+  if (conductorId) {
+    where.push('rt.conductor_id = :conductorId');
+    replacements.conductorId = Number(conductorId);
+  }
+
+  if (filtros.desde) {
+    replacements.fechaDesde = filtros.desde;
+  }
+
+  if (filtros.hasta) {
+    replacements.fechaHasta = filtros.hasta;
+  }
+
+  const filtrosFechaGasto = [];
+  const filtrosFechaRecarga = [];
+
+  if (filtros.desde) {
+    filtrosFechaGasto.push('g.fecha >= :fechaDesde');
+    filtrosFechaRecarga.push('rc.fecha >= :fechaDesde');
+  }
+
+  if (filtros.hasta) {
+    filtrosFechaGasto.push('g.fecha <= :fechaHasta');
+    filtrosFechaRecarga.push('rc.fecha <= :fechaHasta');
+  }
+
+  const sql = `
+    SELECT
+      rt.id AS rutaId,
+      rt.nombre AS nombreRuta,
+      rt.fecha_inicio AS fechaInicio,
+      rt.fecha_fin AS fechaFin,
+      u.id AS conductorId,
+      u.nombre AS conductorNombre,
+      so.id AS sedeOrigenId,
+      so.nombre AS sedeOrigenNombre,
+      sd.id AS sedeDestinoId,
+      sd.nombre AS sedeDestinoNombre,
+      COALESCE((
+        SELECT SUM(g.monto)
+        FROM gastos g
+        WHERE g.ruta_id = rt.id
+        ${filtrosFechaGasto.length ? `AND ${filtrosFechaGasto.join(' AND ')}` : ''}
+      ), 0) AS totalGastos,
+      COALESCE((
+        SELECT SUM(rc.monto)
+        FROM recargas rc
+        WHERE rc.ruta_id = rt.id
+        ${filtrosFechaRecarga.length ? `AND ${filtrosFechaRecarga.join(' AND ')}` : ''}
+      ), 0) AS totalRecargas
+    FROM rutas rt
+    JOIN users u ON u.id = rt.conductor_id
+    JOIN sedes so ON so.id = rt.sede_origen_id
+    JOIN sedes sd ON sd.id = rt.sede_destino_id
+    WHERE ${where.join(' AND ')}
+    ORDER BY rt.fecha_inicio DESC, rt.nombre ASC
+  `;
+
+  const resultados = await sequelize.query(sql, {
+    replacements,
+    type: QueryTypes.SELECT,
+  });
+
+  return resultados.map((item) => {
+    const totalGastos = Number(item.totalGastos || 0);
+    const totalRecargas = Number(item.totalRecargas || 0);
+    return {
+      rutaId: String(item.rutaId),
+      nombreRuta: item.nombreRuta,
+      fechaInicio: item.fechaInicio,
+      fechaFin: item.fechaFin,
+      totalGastos,
+      totalRecargas,
+      balance: totalRecargas - totalGastos,
+      conductor: {
+        _id: String(item.conductorId),
+        nombre: item.conductorNombre,
+      },
+      sedeOrigen: {
+        _id: String(item.sedeOrigenId),
+        nombre: item.sedeOrigenNombre,
+      },
+      sedeDestino: {
+        _id: String(item.sedeDestinoId),
+        nombre: item.sedeDestinoNombre,
+      },
+    };
+  });
+};
+
+const obtenerSumatorias = async (filtros) => {
+  const [
+    gastosPorSede,
+    gastosPorConductor,
+    gastosPorRuta,
+    recargasPorSede,
+    recargasPorRuta,
+  ] = await Promise.all([
+    ejecutarAgregacion({ tipo: 'gasto', agrupacion: 'sede', filtros }),
+    ejecutarAgregacion({ tipo: 'gasto', agrupacion: 'conductor', filtros }),
+    ejecutarAgregacion({ tipo: 'gasto', agrupacion: 'ruta', filtros }),
+    ejecutarAgregacion({ tipo: 'recarga', agrupacion: 'sede', filtros }),
+    ejecutarAgregacion({ tipo: 'recarga', agrupacion: 'ruta', filtros }),
+  ]);
+
+  return {
+    gastosPorSede: mapToGroupTotals(gastosPorSede),
+    gastosPorConductor: mapToGroupTotals(gastosPorConductor),
+    gastosPorRuta: mapToGroupTotals(gastosPorRuta),
+    recargasPorSede: mapToGroupTotals(recargasPorSede),
+    recargasPorRuta: mapToGroupTotals(recargasPorRuta),
+  };
+};
+
 const generarBalance = async (req, res, next) => {
   try {
     const {
@@ -133,9 +268,11 @@ const generarBalance = async (req, res, next) => {
       conductorId: conductorId ? Number(conductorId) : null,
     };
 
-    const [gastos, recargas] = await Promise.all([
+    const [gastos, recargas, detalleRutas, sumatorias] = await Promise.all([
       ejecutarAgregacion({ tipo: 'gasto', agrupacion, filtros }),
       ejecutarAgregacion({ tipo: 'recarga', agrupacion, filtros }),
+      obtenerDetalleRutas({ filtros, rutaId: filtros.rutaId, sedeId: filtros.sedeId, conductorId: filtros.conductorId }),
+      obtenerSumatorias(filtros),
     ]);
 
     const balanceMap = new Map();
@@ -165,7 +302,7 @@ const generarBalance = async (req, res, next) => {
 
     const resultados = Array.from(balanceMap.values()).map((item) => ({
       ...item,
-      key: item.clave,
+      key: String(item.clave),
       balance: item.totalRecargas - item.totalGastos,
     }));
 
@@ -190,6 +327,8 @@ const generarBalance = async (req, res, next) => {
       },
       resultados,
       totalesGenerales,
+      detalleRutas,
+      sumatorias,
     });
   } catch (error) {
     return next(error);
