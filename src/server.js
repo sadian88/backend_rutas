@@ -32,7 +32,7 @@ if (!corsOrigins.length) {
 }
 
 if (process.env.NODE_ENV === 'production') {
-  corsOrigins.push('http://localhost:4200,https://sadian88.github.io');
+  corsOrigins.push('https://sadian88.github.io');
 }
 
 const allowedOrigins = new Set(corsOrigins);
